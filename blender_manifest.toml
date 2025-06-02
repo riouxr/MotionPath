@@ -1,0 +1,12 @@
+schema_version = "1.0.0"
+id = "motionpath"
+version = "1.2.0"
+name = "Motion Path Creator"
+tagline = "Create motion paths for bones, vertices, empties and objects"
+maintainer = "Blender Bob"
+type = "add-on"
+website = "https://github.com/riouxr/Motionpath"
+tags = ["Animation"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2025 Robert Rioux"]
