@@ -61,6 +61,9 @@ class MotionPathEntry(bpy.types.PropertyGroup):
     visible: BoolProperty(default=True)
     source_type: StringProperty()
     object_name: StringProperty()
+    markers_on_keyframes_only: BoolProperty(default=False)
+    previous_show_markers: BoolProperty(default=True)
+
 
 class MotionPathSettings(bpy.types.PropertyGroup):
     use_timeline: BoolProperty(name="Use Timeline", default=True)
@@ -209,7 +212,7 @@ def create_motion_path(obj, start, end, world_matrix, *, v_index=None, bone_name
         if (f - start) % settings.marker_step != 0:
             continue
 
-        inst = bpy.data.objects.new("Marker", base_mesh)
+        inst = bpy.data.objects.new(f"Marker#{f}", base_mesh)
         inst.scale = (settings.icosphere_radius,) * 3
         inst.location = pos
         inst.parent = curve_obj
@@ -677,6 +680,42 @@ class OBJECT_OT_RefreshPath(bpy.types.Operator):
 
         return {'FINISHED'}
 
+class OBJECT_OT_ToggleKeyframeOnlyMarkers(bpy.types.Operator):
+    bl_idname = "motionpath.toggle_keyframe_markers"
+    bl_label = "Toggle Keyframe Markers"
+    index: IntProperty()
+
+    def execute(self, ctx):
+        path = ctx.scene.motion_path_settings.paths[self.index]
+        keyframes_only = not path.markers_on_keyframes_only
+        path.markers_on_keyframes_only = keyframes_only
+
+        markers = find_markers(path.name)
+        obj = bpy.data.objects.get(path.object_name)
+        if not obj:
+            self.report({'WARNING'}, f"Object '{path.object_name}' not found.")
+            return {'CANCELLED'}
+
+        if keyframes_only:
+            # Save current state
+            path.previous_show_markers = path.show_markers
+            path.show_markers = True
+            keyframes = set()
+            if obj.animation_data and obj.animation_data.action:
+                for fcu in obj.animation_data.action.fcurves:
+                    keyframes.update(int(k.co.x) for k in fcu.keyframe_points)
+
+            for m in markers:
+                m_frame = int(m.name.split("#")[-1]) if "#" in m.name else None
+                m.hide_viewport = m_frame not in keyframes if m_frame is not None else True
+        else:
+            # Restore previous visibility state
+            path.show_markers = path.previous_show_markers
+            for m in markers:
+                m.hide_viewport = not path.show_markers
+
+        return {'FINISHED'}
+
 # ────────────────────────────────────────────────────────────────────────────────
 # UI
 # ────────────────────────────────────────────────────────────────────────────────
@@ -715,6 +754,7 @@ class VIEW3D_PT_MotionPathPanel(bpy.types.Panel):
                 row.operator("motionpath.toggle_visibility", text="", icon='HIDE_OFF' if path.visible else 'HIDE_ON').index = i
                 row.operator("motionpath.refresh", text="", icon='FILE_REFRESH').index = i
                 row.operator("motionpath.toggle_markers", text="", icon='RADIOBUT_ON' if path.show_markers else 'RADIOBUT_OFF').index = i
+                row.operator("motionpath.toggle_keyframe_markers", text="", icon='KEYFRAME_HLT' if path.markers_on_keyframes_only else 'KEYFRAME').index = i
                 row.operator("motionpath.toggle_lock", text="", icon='DECORATE_LOCKED' if path.locked else 'DECORATE_UNLOCKED').index = i
                 row.operator("motionpath.ghost_path", text="", icon='GHOST_ENABLED' if path.ghosted else 'GHOST_DISABLED').index = i
                 row.operator("motionpath.delete_path", text="", icon='X').index = i
@@ -742,6 +782,7 @@ classes = (
     VIEW3D_PT_MotionPathPanel,
     OBJECT_OT_RefreshAllPaths,
     OBJECT_OT_DeleteAllPaths,
+    OBJECT_OT_ToggleKeyframeOnlyMarkers,
 
 )
 
