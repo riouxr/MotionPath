@@ -230,7 +230,7 @@ def create_motion_path(obj, start, end, world_matrix, *, v_index=None, bone_name
         if (f - start) % settings.marker_step != 0:
             continue
 
-        inst = bpy.data.objects.new(f"Marker#{f}", base_mesh)
+        inst = bpy.data.objects.new(f"{full_name}_Marker#{f}", base_mesh)
         inst.scale = (settings.icosphere_radius,) * 3
         inst.location = pos
         inst.parent = curve_obj
@@ -760,7 +760,12 @@ class OBJECT_OT_ToggleKeyframeOnlyMarkers(bpy.types.Operator):
                     keyframes.update(int(k.co.x) for k in fcu.keyframe_points)
 
             for m in markers:
-                m_frame = int(m.name.split("#")[-1]) if "#" in m.name else None
+                m_frame_str = m.name.split("#")[-1] if "#" in m.name else ""
+                # To handle possible suffixes like .001, split by '.' and take first part
+                try:
+                    m_frame = int(m_frame_str.split(".")[0])
+                except ValueError:
+                    m_frame = None
                 m.hide_viewport = m_frame not in keyframes if m_frame is not None else True
         else:
             # Restore previous visibility state
