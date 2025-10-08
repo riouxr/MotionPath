@@ -37,6 +37,24 @@ def update_path_color(self, context):
     name = self.name
     col = self.color
     ghost_col = desaturate_color(col, 0.5)
+    
+    # Update original material
+    mat_name = f"MP_Mat_{name}"
+    mat = bpy.data.materials.get(mat_name)
+    if mat and mat.use_nodes:
+        bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if bsdf:
+            bsdf.inputs['Base Color'].default_value = col
+    
+    # Update ghost material if exists
+    ghost_mat_name = f"MP_Mat_{name}_Ghost"
+    ghost_mat = bpy.data.materials.get(ghost_mat_name)
+    if ghost_mat and ghost_mat.use_nodes:
+        bsdf = next((n for n in ghost_mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if bsdf:
+            bsdf.inputs['Base Color'].default_value = ghost_col
+    
+    # Update object colors
     for obj in bpy.data.objects:
         if obj.get("motion_path_addon_sphere") and obj.parent:
             if obj.parent.name == name:
@@ -223,11 +241,14 @@ def create_motion_path(obj, start, end, world_matrix, *, v_index=None, bone_name
         scene.collection.objects.link(inst)
         inst.show_in_front = True
         inst.color = mat_color
+        
+        # Assign material per object
+        if len(inst.material_slots) == 0:
+            inst.data.materials.append(None)
+        inst.material_slots[0].link = 'OBJECT'
+        inst.material_slots[0].material = mat
+        
         created_markers.append(inst)
-
-    for inst in created_markers:
-        inst.data.materials.clear()
-        inst.data.materials.append(mat)
 
     if not path_data:
         entry = settings.paths.add()
@@ -402,26 +423,36 @@ class OBJECT_OT_CreateVertexPath(bpy.types.Operator):
     bl_label = "Vertex"
 
     confirm: BoolProperty(default=False)
+    confirm_message: StringProperty(default="")
 
-    def execute(self, ctx):
-        if bpy.context.mode != 'EDIT_MESH':
+    def invoke(self, context, event):
+        if context.mode != 'EDIT_MESH':
             self.report({'WARNING'}, "Must be in Edit Mode to create vertex paths.")
             return {'CANCELLED'}
 
-        obj = ctx.active_object
+        obj = context.active_object
         if not obj or obj.type != 'MESH':
             self.report({'WARNING'}, "No active mesh object")
             return {'CANCELLED'}
 
         bm = bmesh.from_edit_mesh(obj.data)
-        selected = [v.index for v in bm.verts if v.select]
-        if not selected:
+        count = len([v for v in bm.verts if v.select])
+        if count == 0:
             self.report({'WARNING'}, "No vertex selected")
             return {'CANCELLED'}
 
-        if len(selected) > 10 and not self.confirm:
-            self.confirm_message = f"Are you sure you want to create paths for {count} objects?"
-            return ctx.window_manager.invoke_confirm(self, event=None)
+        if count > 10 and not self.confirm:
+            self.confirm_message = f"Are you sure you want to create paths for {count} vertices?"
+            return context.window_manager.invoke_props_dialog(self)
+        return self.execute(context)
+
+    def draw(self, context):
+        self.layout.label(text=self.confirm_message)
+
+    def execute(self, ctx):
+        obj = ctx.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        selected = [v.index for v in bm.verts if v.select]
 
         bpy.ops.object.mode_set(mode='OBJECT')
         f0, f1 = get_frame_range(ctx)
@@ -439,7 +470,6 @@ class OBJECT_OT_CreateVertexPath(bpy.types.Operator):
             return {'CANCELLED'}
 
         return {'FINISHED'}
-
 
     
 class OBJECT_OT_CreateBonePath(bpy.types.Operator):
@@ -553,7 +583,7 @@ class OBJECT_OT_GhostPath(bpy.types.Operator):
     def execute(self, ctx):
         path = ctx.scene.motion_path_settings.paths[self.index]
         ghost_name = path.name + "_Ghost"
-        ghost_color = desaturate_color(path.color, 0.25)
+        ghost_color = desaturate_color(path.color, 0.5)
 
         if not path.ghosted:
             # Duplicate path and markers
@@ -568,6 +598,7 @@ class OBJECT_OT_GhostPath(bpy.types.Operator):
             new_curve.hide_select = True
             bpy.context.scene.collection.objects.link(new_curve)
 
+            new_markers = []
             for marker in find_markers(path.name):
                 new_marker = marker.copy()
                 new_marker.data = marker.data
@@ -577,6 +608,29 @@ class OBJECT_OT_GhostPath(bpy.types.Operator):
                 new_marker.hide_select = True
                 new_marker.color = ghost_color
                 bpy.context.scene.collection.objects.link(new_marker)
+                new_markers.append(new_marker)
+            
+            # Create ghost material
+            ghost_mat_name = f"MP_Mat_{path.name}_Ghost"
+            ghost_mat = bpy.data.materials.new(name=ghost_mat_name)
+            ghost_mat.use_nodes = True
+            nodes = ghost_mat.node_tree.nodes
+            links = ghost_mat.node_tree.links
+            nodes.clear()
+
+            output = nodes.new(type='ShaderNodeOutputMaterial')
+            bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+            bsdf.inputs['Base Color'].default_value = ghost_color
+            bsdf.inputs['Roughness'].default_value = 0.5
+            links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+            
+            # Assign ghost material to new markers
+            for new_marker in new_markers:
+                if len(new_marker.material_slots) == 0:
+                    new_marker.data.materials.append(None)
+                new_marker.material_slots[0].link = 'OBJECT'
+                new_marker.material_slots[0].material = ghost_mat
+                new_marker["motion_path_addon_material"] = ghost_mat_name
 
             path.ghosted = True
 
